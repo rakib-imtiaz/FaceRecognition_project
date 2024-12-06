@@ -78,6 +78,7 @@ def verify_login():
 
 @app.route('/check_auth_status')
 def check_auth_status():
+    print("Checking auth status:", auth_status['success'])  # Debug print
     if auth_status['success']:
         # Reset the status after checking
         auth_status['success'] = False
@@ -93,6 +94,8 @@ def reset_auth():
 @app.route('/dashboard')
 @login_required
 def dashboard():
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
     return render_template('dashboard.html')
 
 def gen_frames_signup():
@@ -199,7 +202,7 @@ def gen_frames_signup():
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
 def train_model():
-    data_path = 'Captured_Images/'
+    data_path = os.getcwd() + '/Captured_Images/'
     onlyfiles = [f for f in listdir(data_path) if isfile(join(data_path, f))]
 
     Training_Data, Labels = [], []
@@ -211,11 +214,18 @@ def train_model():
         Labels.append(i)
 
     Labels = np.asarray(Labels, dtype=np.int32)
+
+    # Train only once
+    model = cv2.face.LBPHFaceRecognizer_create()
     model.train(np.asarray(Training_Data), np.asarray(Labels))
-    model.save('trained_model.yml')
+    model.write('trainer.yml')
+    print("Model trained successfully")
 
 def gen_frames_login():
     cap = cv2.VideoCapture(0)
+    # Load model once at the start
+    model = cv2.face.LBPHFaceRecognizer_create()
+    model.read('trainer.yml')
     
     while True:
         ret, frame = cap.read()
@@ -227,18 +237,20 @@ def gen_frames_login():
         try:
             if len(face) > 0:
                 face = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
+                # Use the already loaded model
                 results = model.predict(face)
                 
                 if results[1] < 500:
                     confidence = int(100 * (1 - (results[1])/400))
-                    display_string = f'{confidence}% Confident it is User'
+                    display_string = str(confidence) + '% Confident it is User'
+                    
                     cv2.putText(image, display_string, (100, 120), 
                               cv2.FONT_HERSHEY_COMPLEX, 1, (255,120,150), 2)
                     
-                    if confidence > 75:
+                    if confidence > 90:
                         cv2.putText(image, "Unlocked", (250, 450), 
                                   cv2.FONT_HERSHEY_COMPLEX, 1, (0,255,0), 2)
-                        auth_status['success'] = True  # Use global variable instead of session
+                        auth_status['success'] = True
                         ret, buffer = cv2.imencode('.jpg', image)
                         frame = buffer.tobytes()
                         yield (b'--frame\r\n'
@@ -251,6 +263,7 @@ def gen_frames_login():
                 else:
                     cv2.putText(image, "Locked", (250, 450), 
                               cv2.FONT_HERSHEY_COMPLEX, 1, (0,0,255), 2)
+                    
             else:
                 cv2.putText(image, "No Face Found", (220, 120), 
                           cv2.FONT_HERSHEY_COMPLEX, 1, (0,0,255), 2)
@@ -268,6 +281,8 @@ def gen_frames_login():
         frame = buffer.tobytes()
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+    cap.release()
 
 @app.route('/video_feed_signup')
 def video_feed_signup():
